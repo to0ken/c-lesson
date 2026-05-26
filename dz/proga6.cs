@@ -2,7 +2,7 @@
 using System.Diagnostics;
 using System.Linq.Expressions;
 
-
+// 1.Создать родительский класс exchange, и дочернии классы валют(usd,rub,eur,uan,peso), в которых находятся вызов родительского метода для инфо о курсе двух валют.
 class Money
 {
     
