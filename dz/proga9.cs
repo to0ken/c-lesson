@@ -5,6 +5,9 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Text;
 
+// 1. Создать класс HistogramArray конструктор принимает массив чисел и количество интервало.
+//get возвращает в какой интервал попадает значение(индекс интервала), ищет интервал в которое оно попадает.
+//Так же get double возвращает значение соответсвующее процентилю
 
 public class HistogramArray
 {
