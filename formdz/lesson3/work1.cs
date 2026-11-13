@@ -10,21 +10,19 @@ using System.Windows.Forms;
 namespace ConsoleApp1
 {
 
-    public partial class Form1 : Form
+    class Program
     {
-        [DllImport("kernel32.dll")]
-        private static extern bool Beep(uint frequency, uint duration);
+    [DllImport("kernel32.dll")]
+    static extern bool Beep(uint frequency, uint duration);
 
-        [DllImport("user32.dll")]
-        private static extern bool MessageBeep(uint uType);
+    [DllImport("user32.dll")]
+    static extern bool MessageBeep(uint type);
 
-        public Form1()
-        {
-            InitializeComponent();
-            button1.Click += button1_Click;
-        }
+    static void Main()
+    {
+        Console.WriteLine("Начало воспроизведения сигналов");
 
-        private void button1_Click(object sender, EventArgs e)
+        for (int i = 0; i < 5; i++)
         {
             Beep(400, 500);
             Thread.Sleep(1000);
