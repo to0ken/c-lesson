@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace MultiThreadApp
+namespace ConsoleApp1
 {
     public partial class Form1 : Form
     {
