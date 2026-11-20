@@ -4,139 +4,125 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace QuoteClient
+namespace Client;
+
+public class QuoteClient
 {
+    private readonly Socket _socket;
+    private bool _isConnected;
 
-    public class QuoteClient
+    public QuoteClient()
     {
-        private readonly Socket _socket;
-        private bool _isAuthenticated;
+        _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    }
 
-        public QuoteClient()
+    public async Task<bool> ConnectAndAuthAsync(string host, int port, string username, string password)
+    {
+        try
         {
-            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        }
-
-        public async Task<bool> ConnectAndAuthenticateAsync(string host, int port, string username, string password)
-        {
-            try
-            {
-                await _socket.ConnectAsync(new IPEndPoint(IPAddress.Parse(host), port));
-                
-
-                await SendStringAsync($"{username}:{password}");
-                
-                string response = await ReceiveStringAsync();
-                if (response == "OK:AUTH_SUCCESS")
-                {
-                    _isAuthenticated = true;
-                    return true;
-                }
-                else if (response == "ERROR:SERVER_BUSY")
-                {
-
-                    return false;
-                }
-                else
-                {
-
-                    return false;
-                }
-            }
-            catch (SocketException ex)
-            {
-
-                return false;
-            }
-        }
-
-        public async Task<string> RequestQuoteAsync()
-        {
-            if (!_isAuthenticated) return "Сначала выполните аутентификацию.";
-
-            await SendStringAsync("GET_QUOTE");
-            string response = await ReceiveStringAsync();
-
-            if (response == null)
-            {
-                return "Соединение разорвано сервером.";
-            }
-            if (response.StartsWith("ERROR:QUOTE_LIMIT_REACHED"))
-            {
-                return "Вы достигли максимального количества цитат. Соединение будет закрыто.";
-            }
-            if (response.StartsWith("QUOTE:"))
-            {
-                return response.Substring(6); // Возвращаем только текст цитаты
-            }
-
-            return "Неизвестный ответ от сервера.";
-        }
-
-        public void Disconnect()
-        {
-            if (_socket.Connected)
-            {
-                _ = SendStringAsync("EXIT");
-                _socket.Shutdown(SocketShutdown.Both);
-                _socket.Close();
-            }
-        }
-
-        private async Task SendStringAsync(string text)
-        {
-            byte[] data = Encoding.UTF8.GetBytes(text + "\n");
-            await _socket.SendAsync(data, SocketFlags.None);
-        }
-
-        private async Task<string> ReceiveStringAsync()
-        {
-            var buffer = new byte[1024];
-            int n = await _socket.ReceiveAsync(buffer, SocketFlags.None);
-            if (n == 0) return null;
+            await _socket.ConnectAsync(new IPEndPoint(IPAddress.Parse(host), port));
             
-            return Encoding.UTF8.GetString(buffer, 0, n).Trim().Replace("\r", "").Replace("\n", "");
+
+            await SendAsync($"{username}:{password}");
+            
+            var response = await ReceiveAsync();
+            
+            if (response == "OK")
+            {
+                _isConnected = true;
+                return true;
+            }
+            
+            Console.WriteLine($"Ошибка сервера: {response}");
+            return false;
+        }
+        catch (SocketException ex)
+        {
+            Console.WriteLine($"Не удалось подключиться: {ex.Message}");
+            return false;
         }
     }
 
-    class Program
+    public async Task<string> RequestQuoteAsync()
     {
-        static async Task Main()
+        if (!_isConnected) return "Соединение не установлено.";
+
+        await SendAsync("get");
+        var response = await ReceiveAsync();
+
+        if (response == "LIMIT")
         {
-            Console.WriteLine("=== Клиент Генератора Цитат ===");
-            
-            Console.Write("Введите имя пользователя: ");
-            string user = Console.ReadLine();
-            Console.Write("Введите пароль: ");
-            string pass = Console.ReadLine();
+            _isConnected = false;
+            return "Вы достигли максимального количества цитат. Соединение разорвано сервером.";
+        }
 
-            var client = new QuoteClient();
-            
-            Console.WriteLine("Подключение к серверу...");
-            bool isConnected = await client.ConnectAndAuthenticateAsync("127.0.0.1", 8080, user, pass);
+        return response;
+    }
 
-            if (isConnected)
+    public void Disconnect()
+    {
+        if (_isConnected)
+        {
+            _ = SendAsync("exit");
+            _socket.Shutdown(SocketShutdown.Both);
+            _socket.Close();
+            _isConnected = false;
+        }
+    }
+
+    private async Task SendAsync(string text)
+    {
+        byte[] data = Encoding.UTF8.GetBytes(text + "\n");
+        await _socket.SendAsync(data, SocketFlags.None);
+    }
+
+    private async Task<string> ReceiveAsync()
+    {
+        var buffer = new byte[1024];
+        int received = await _socket.ReceiveAsync(buffer, SocketFlags.None);
+        if (received == 0) return null;
+        
+        return Encoding.UTF8.GetString(buffer, 0, received).Trim();
+    }
+}
+
+class Program
+{
+    static async Task Main()
+    {
+        Console.WriteLine(" Клиент Генератора Цитат");
+        
+        Console.Write("Введите имя пользователя (например, user1): ");
+        string user = Console.ReadLine()?.Trim() ?? "";
+        
+        Console.Write("Введите пароль (например, pass1): ");
+        string pass = Console.ReadLine()?.Trim() ?? "";
+
+        var client = new QuoteClient();
+        
+        Console.WriteLine("\nПодключение к серверу...");
+        bool isSuccess = await client.ConnectAndAuthAsync("127.0.0.1", 8003, user, pass);
+
+        if (isSuccess)
+        {
+            while (true)
             {
-                Console.WriteLine("Успешно подключено! Нажмите Enter для получения цитаты (или 'exit' для выхода).");
+                Console.Write("\n> ");
+                string input = Console.ReadLine()?.Trim();
                 
-                while (true)
+                if (input?.Equals("exit", StringComparison.OrdinalIgnoreCase) == true)
+                    break;
+
+                string quote = await client.RequestQuoteAsync();
+
+                if (quote.Contains("достигли максимального количества") || quote.Contains("разорвано"))
                 {
-                    Console.Write("\n> ");
-                    string input = Console.ReadLine();
-                    
-                    if (input?.ToLower() == "exit") break;
-
-                    string quote = await client.RequestQuoteAsync();
-
-                    if (quote.Contains("достигли максимального количества") || quote.Contains("разорвано"))
-                    {
-                        break;
-                    }
+                    break;
                 }
             }
-
-            client.Disconnect();
- 
         }
+
+        client.Disconnect();
+        Console.ReadKey();
     }
 }
