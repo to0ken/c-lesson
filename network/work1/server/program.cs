@@ -1,160 +1,168 @@
 using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace QuoteServer
+namespace Server;
+
+// Сетевая часть вынесена в отдельный класс. Её можно легко использовать в WinForms/WPF/ASP.NET
+public class QuoteServer
 {
-    public class QuoteServer
+    private const int Port = 8003;
+    private const int MaxClients = 3;
+    private const int MaxQuotes = 5;
+
+    private static int _connectedClients;
+
+    private static readonly string[] Quotes =
+    [
+        "цитата 1",
+        "цитата 2 ",
+        "цитата 3",
+        "цитата 4"
+    ];
+
+
+    private static readonly string[,] Users =
     {
-        private static readonly Dictionary<string, string> ValidUsers = new()
+        { "user1", "pass1" }, { "user2", "pass2" }, { "user3", "pass3" },
+        
+    };
+
+    public async Task StartAsync()
+    {
+        using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        listener.Bind(new IPEndPoint(IPAddress.Any, Port));
+        listener.Listen(100);
+
+
+
+        while (true)
         {
-            { "admin", "12345" },
-            { "user", "qwerty" }
-        };
+            var client = await listener.AcceptAsync();
 
-        private static readonly string[] Quotes = 
-        {
-            "цитата 1 ааааа",
-            "цитата 2 ббббббб.",
-            "цитата 3 вввввввв.",
-            "цитата 4 ггггггггг.",
-            "цитата 5 дддддддддд."
-        };
-
-
-        private const int MaxClients = 3; 
-        private int _activeClients = 0;
-        private const int MaxQuotesPerUser = 3;
-
-        public async Task StartAsync(int port)
-        {
-            using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            listener.Bind(new IPEndPoint(IPAddress.Any, port));
-            listener.Listen(100);
-
-            Log($"Сервер запущен на порту {port}. Максимум клиентов: {MaxClients}");
-
-            while (true)
-            {
-                Socket clientSocket = await listener.AcceptAsync();
-                _ = HandleClientAsync(clientSocket); 
-            }
-        }
-
-        private async Task HandleClientAsync(Socket client)
-        {
-            string clientIp = client.RemoteEndPoint?.ToString() ?? "Unknown";
-            string username = "Неизвестный";
-            int quotesSent = 0;
-
-            try
-            {
-
-                if (Interlocked.Increment(ref _activeClients) > MaxClients)
-                {
-                    Interlocked.Decrement(ref _activeClients);
-                    Log($"[Отказ] Превышен лимит подключений ({MaxClients}). Отклонен: {clientIp}");
-                    await SendStringAsync(client, "ERROR:SERVER_BUSY");
-                    client.Close();
-                    return;
-                }
-
-                Log($"[Подключение] {clientIp} в {DateTime.Now:HH:mm:ss}");
-
-
-                string authData = await ReceiveStringAsync(client);
-                if (authData == null) { client.Close(); return; }
-
-                var parts = authData.Split(':');
-                if (parts.Length == 2 && ValidUsers.TryGetValue(parts[0], out string expectedPass) && parts[1] == expectedPass)
-                {
-                    username = parts[0];
-                    await SendStringAsync(client, "OK:AUTH_SUCCESS");
-                    Log($"[Аутентификация] Успешно: {username} ({clientIp})");
-                }
-                else
-                {
-                    Log($"[Аутентификация] Ошибка: неверные данные от {clientIp}");
-                    await SendStringAsync(client, "ERROR:AUTH_FAILED");
-                    client.Close();
-                    return;
-                }
-
-                while (true)
-                {
-                    string request = await ReceiveStringAsync(client);
-                    if (request == null || request == "EXIT") break; // Клиент отключился
-
-                    if (request == "GET_QUOTE")
-                    {
-                        if (quotesSent >= MaxQuotesPerUser)
-                        {
-                            Log($"[Лимит] {username} исчерпал лимит цитат ({MaxQuotesPerUser}). Отключение.");
-                            await SendStringAsync(client, "ERROR:QUOTE_LIMIT_REACHED");
-                            break;
-                        }
-
-                        string randomQuote = Quotes[new Random().Next(Quotes.Length)];
-                        quotesSent++;
-                        
   
-                        Log($"[Цитата] {username} получил: \"{randomQuote}\"");
-                        
-                        await SendStringAsync(client, $"QUOTE:{randomQuote}");
-                    }
-                }
-            }
-            catch (SocketException ex)
+            if (Interlocked.Increment(ref _connectedClients) > MaxClients)
             {
-                Log($"[Ошибка] Сетевая ошибка с {clientIp}: {ex.SocketErrorCode}");
+                Interlocked.Decrement(ref _connectedClients);
+                _ = SendErrorAsync(client, "Сервер перегружен. Попробуйте позже");
+                continue;
             }
-            finally
-            {
 
-                Log($"[Отключение] {username} ({clientIp}) в {DateTime.Now:HH:mm:ss}");
-                Interlocked.Decrement(ref _activeClients);
-                client.Shutdown(SocketShutdown.Both);
-                client.Close();
-            }
-        }
-
-
-        private static async Task SendStringAsync(Socket socket, string text)
-        {
-            byte[] data = Encoding.UTF8.GetBytes(text);
-            await socket.SendAsync(data, SocketFlags.None);
-        }
-
-        private static async Task<string> ReceiveStringAsync(Socket socket)
-        {
-            var buffer = new byte[1024];
-            int n = await socket.ReceiveAsync(buffer, SocketFlags.None);
-            if (n == 0) return null;
-            
-            string result = Encoding.UTF8.GetString(buffer, 0, n).Trim();
-            return result.Replace("\r", "").Replace("\n", "");
-        }
-
-        private static void Log(string message)
-        {
-            lock (Console.Out)
-            {
-                Console.WriteLine(message);
-            }
+            _ = HandleClientAsync(client);
         }
     }
 
-    class Program
+    private static async Task SendErrorAsync(Socket client, string message)
     {
-        static async Task Main()
+        using (client)
         {
-            var server = new QuoteServer();
-            await server.StartAsync(8081);
+            await client.SendAsync(Encoding.UTF8.GetBytes(message + "\n"), SocketFlags.None);
         }
+    }
+
+    private async Task HandleClientAsync(Socket client)
+    {
+        var username = "Неизвестен";
+        var connectTime = DateTime.Now;
+        var quoteCount = 0;
+
+        try
+        {
+            using (client)
+            {
+                Log($"Подключился: {client.RemoteEndPoint}");
+
+                var buffer = new byte[1024];
+                var received = await client.ReceiveAsync(buffer, SocketFlags.None);
+
+                if (received == 0) return;
+
+                var loginData = Encoding.UTF8.GetString(buffer, 0, received).Trim();
+                var parts = loginData.Split(':');
+                var authorized = false;
+                if (parts.Length == 2)
+                {
+                    for (var i = 0; i < Users.GetLength(0); i++)
+                    {
+                        if (Users[i, 0] == parts[0] && Users[i, 1] == parts[1])
+                        {
+                            authorized = true;
+                            username = Users[i, 0];
+                            break;
+                        }
+                    }
+                }
+
+                var response = authorized ? "OK" : "Неверный логин или пароль";
+                await client.SendAsync(Encoding.UTF8.GetBytes(response + "\n"), SocketFlags.None);
+
+                if (!authorized)
+                {
+
+                    return;
+                }
+
+                Log($"Пользователь: {username} | Время подключения: {connectTime:HH:mm:ss}");
+
+                while (true)
+                {
+                    received = await client.ReceiveAsync(buffer, SocketFlags.None);
+                    if (received == 0) break;
+
+                    var request = Encoding.UTF8.GetString(buffer, 0, received).Trim();
+
+                    if (request.Equals("exit", StringComparison.OrdinalIgnoreCase))
+                        break;
+
+
+                    if (quoteCount >= MaxQuotes)
+                    {
+                        await client.SendAsync(Encoding.UTF8.GetBytes("LIMIT\n"), SocketFlags.None);
+                        Log($"Пользователь {username} достиг лимита цитат ({MaxQuotes}). Соединение разорвано.");
+                        break;
+                    }
+
+                    var quote = Quotes[Random.Shared.Next(Quotes.Length)];
+                    quoteCount++;
+
+                    await client.SendAsync(Encoding.UTF8.GetBytes(quote + "\n"), SocketFlags.None);
+
+                }
+            }
+        }
+        catch (SocketException ex)
+        {
+            Log($"Сетевая ошибка с {username}: {ex.Message}");
+        }
+        finally
+        {
+
+            Interlocked.Decrement(ref _connectedClients);
+            Log($"Отключился: {username}");
+            Log($"Время отключения: {DateTime.Now:HH:mm:ss}");
+            Log($"Всего получено цитат: {quoteCount}");
+
+        }
+    }
+
+    private static void Log(string message)
+    {
+        lock (Console.Out)
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+        }
+    }
+}
+
+class Program
+{
+    static async Task Main()
+    {
+        var server = new QuoteServer();
+        await server.StartAsync();
     }
 }
